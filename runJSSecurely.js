@@ -76,17 +76,17 @@ function destroySandboxedIframe() {
 }
 
 function registerForMessagesFromIframe(iframeReadyCb) {
-  window.addEventListener("message", evt => {
-    if (evt.source !== scriptIframe.contentWindow) {
-      console.log("ignoring msg");
-    } else {
-      if (evt.data.ready) {
-        sendWorkerScript().then(iframeReadyCb);
-      } else {
-        processMessageFromInsecureIframe(evt.data);
-      }
-    }
-  });
+//   window.addEventListener("message", evt => {
+//     if (evt.source !== scriptIframe.contentWindow) {
+//       console.log("ignoring msg");
+//     } else {
+//       if (evt.data.ready) {
+//         sendWorkerScript().then(iframeReadyCb);
+//       } else {
+//         processMessageFromInsecureIframe(evt.data);
+//       }
+//     }
+//   });
 }
 
 function sendWorkerScript() {
