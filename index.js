@@ -22,7 +22,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const runButton = document.getElementById("runButton");
 
     // Doc level script.
-    executeScriptSecurely("");
+   // executeScriptSecurely("");
 
     runButton.addEventListener("click", (evt) => {
         executeScriptSecurely(scriptContent.value);
