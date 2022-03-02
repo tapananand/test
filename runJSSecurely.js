@@ -188,7 +188,7 @@ function sendScriptRunningInfo(script) {
   setTimeout(() => {
     scriptIframe.contentWindow.executeSomeDummyJS(""); // the script string doesn't matter for this POC, just executing some dummy code in worker 
 //     goIntoJSExecutionCycle();
-  }, 100);
+  }, 1000);
 }
 
 function isThereAMessage(arr) {
