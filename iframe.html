@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'none'; form-action 'none'; navigate-to 'none'; base-uri 'none'; 
+        object-src 'none'; block-all-mixed-content; script-src 'unsafe-inline'; worker-src blob: 'self'; 
+    "/>
+    <meta http-equiv="origin-trial" content="AlrGyU/MNtIb/V6Q9y++RgcsMrWw+UHvml2tGJ1mGsPvMnF9mYNJikptKFEhPWi1MCEfTsz8DRWOqxXElPdS5AMAAABgeyJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0OjgwODAiLCJmZWF0dXJlIjoiVW5yZXN0cmljdGVkU2hhcmVkQXJyYXlCdWZmZXIiLCJleHBpcnkiOjE2NTg4Nzk5OTl9">
+    <title>Sandboxed Iframe to Run Untrusted JS</title>
+</head>
+<body>
+    <!-- <script src="iframe.js"></script> -->
+    <!-- inlining since safari doesn't handle 'self' keyword in CSP for sandboxed iframes well -->
+    <script>
+        (function() {
+            /*************************************************************************
+             * ADOBE CONFIDENTIAL
+             * ___________________
+             *
+             *  Copyright 2018 Adobe
+             *  All Rights Reserved.
+             *
+             * NOTICE:  All information contained herein is, and remains
+             * the property of Adobe and its suppliers, if any. The intellectual
+             * and technical concepts contained herein are proprietary to Adobe
+             * and its suppliers and are protected by all applicable intellectual
+             * property laws, including trade secret and copyright laws.
+             * Dissemination of this information or reproduction of this material
+             * is strictly forbidden unless prior written permission is obtained
+             * from Adobe.
+             **************************************************************************/
+
+            let workerScript = "";
+            const sab = new SharedArrayBuffer(1024);
+            const int32 = new Int32Array(sab);
+            let messagingSab;
+            let dummyWorker;
+
+            function setupScriptTag(script) {
+                const scriptTag = document.createElement("script");
+                scriptTag.id = "unsafe-script";
+                scriptTag.textContent = makeScriptSecurelyRunnable(script);
+                document.body.appendChild(scriptTag);
+                return scriptTag;
+            }
+
+            // needs to be agnostic of whether using main thread or worker thread.
+            // In the actual implementation, the script to be run can either be sent as postmessage
+            // into this iframe or may be inline generated like below in a script tag.
+            // Need to see how the build script would work for this.
+            function setupEnvAndExecuteScript() {
+                function consoleAPIProvider() {
+                    return {
+                        console: {
+                            log: console.log
+                        }
+                    }
+                }
+
+                function appAPIProvider() {
+                    return {
+                        app: {
+                            alert: window.alert.bind(window)
+                        }
+                    }
+                }
+
+                function createSecureProxyObject(customAPIProviders) {
+                    const props = getAllPropertyNames(window);
+                    let obj = {};
+
+                    // TODO: avoid two loops
+                    props.forEach((prop) => {
+                        obj[prop] = null;
+                    });
+
+                    customAPIProviders.forEach((apiProvider) => {
+                        obj = {
+                            ...obj,
+                            ...apiProvider()
+                        }
+                    });
+
+                    return Object.freeze(obj);
+                }
+
+                function getAllPropertyNames(obj) {
+                    var props = [];
+                    let currObj = obj;
+
+                    do {
+                        Array.prototype.push.apply(props, Object.getOwnPropertyNames(currObj));
+                    } while(currObj = Object.getPrototypeOf(currObj));
+
+                    return props;
+                }
+
+                const customAPIProviders = [ consoleAPIProvider, appAPIProvider ];
+                
+                // create this object carefully - window/global vars dummy values present in the with object.
+                // apart from the vars we use from the window object, stub the rest as null.
+                const obj = createSecureProxyObject(customAPIProviders);
+
+                console.log(obj);
+
+                try {
+                    scriptExecutor(obj);
+                } catch(e) {
+                    console.log(e);
+                }
+            }
+
+            function cleanupScriptTag(scriptTag) {
+                window.scriptExecutor = null;
+                document.body.removeChild(scriptTag);
+            }
+
+            function runScriptOnMainThread(script) {
+                const scriptTag = setupScriptTag(script);
+                setupEnvAndExecuteScript();
+                cleanupScriptTag(scriptTag);
+            }
+
+            var a = 5000;
+
+            function makeScriptSecurelyRunnable(inputScript) {
+                let outputScript = "";
+
+                function scriptExecutor(obj) {
+                    with(obj) {
+                        (function () {
+                            'use strict';
+                            // <script here>
+                        }).bind(this)();
+                    }
+                }
+
+                outputScript += scriptExecutor.toString();
+                outputScript = outputScript.replace("// <script here>", inputScript);
+                // a possible attack with this is can somehow the script can be such that it closes all the brackets and somehow executes code outside
+                // the with statement? For all of these reasons, it seems we should use a web worker. Even the use strict part may be escaped.
+                return outputScript;
+            }
+
+            function runScriptUsingWebWorker(script) {
+                let newWorkerScript = workerScript;
+                newWorkerScript += "\n";
+                newWorkerScript += makeScriptSecurelyRunnable(script);
+                // newWorkerScript += "setupEnvAndExecuteScript();";
+
+                const blob = new Blob([newWorkerScript], {
+                    type: "application/javascript"
+                });
+
+                const worker = new Worker(URL.createObjectURL(blob));
+                worker.onerror = console.log.bind("workererror");
+                worker.onmessage = (evt) => {
+                    console.log("from worker", evt);
+
+                    // TODO: validate data and format here before sending to parent.
+                    if(evt.data.command === "showAlert") {
+                        window.parent.postMessage(evt.data, "*");
+                    } else if(evt.data.command === "getValue") {
+                        window.parent.postMessage(evt.data, "*");
+                    } else if(evt.data.command === "setValue") {
+                        window.parent.postMessage(evt.data, "*");
+                    }
+                };
+
+                worker.postMessage({
+                    command: "setBuffer",
+                    data: {
+                        sab
+                    }
+                });
+
+                worker.postMessage({
+                    command: "execute"
+                });
+            }
+
+            const valueTypesMapping = {
+                "number": 0,
+                "boolean": 1,
+                "string": 2,
+                "object": 3,
+                "array": 4
+            }
+
+            window.addEventListener("message", (evt) => {
+                if(evt.source === window.parent) {
+                    if(evt.data.script) {
+                        console.log("Running");
+                        console.log(evt.data.script);
+                        if(!evt.data.useWebWorker) {
+                            runScriptOnMainThread(evt.data.script);
+                        } else {
+                            runScriptUsingWebWorker(evt.data.script);
+                        }
+                    } else if(evt.data.workerScript) {
+                        workerScript = evt.data.workerScript;
+                    } else if(evt.data.command === "showAlert") {
+                        if(evt.data.data && evt.data.data.done) {
+                            Atomics.store(int32, 0, valueTypesMapping["number"]);
+                            Atomics.store(int32, 1, evt.data.data.resp);
+                            Atomics.notify(int32, 0, 1);
+                        }
+                    } else if(evt.data.command === "getValue") {
+                        if(evt.data.data.done) {
+                            Atomics.store(int32, 0, valueTypesMapping[evt.data.data.type]);
+                            if(evt.data.data.type === "boolean") {
+                                Atomics.store(int32, 1, Number(evt.data.data.value));
+                            }
+                        }
+
+                        Atomics.notify(int32, 0, 1);
+                    } else if(evt.data.command === "setValue") {
+                        console.log(evt.data);
+                        if(evt.data.data.done) {
+                            Atomics.store(int32, 0, valueTypesMapping["boolean"]);
+                            Atomics.store(int32, 1, 1);
+                        }
+
+                        Atomics.notify(int32, 0, 1);
+                    }
+                }
+            });
+
+            window.parent.postMessage({
+                ready: true
+            }, "*");
+
+        })();
+
+        function setSAB(buffer) {
+            messagingSab = buffer;
+            let int32ViewInIframe = new Int32Array(messagingSab);
+            dummyWorker = new window.Worker("dummyWorker.js");
+            dummyWorker.onmessage = console.log.bind("worker onmessage");
+            dummyWorker.onerror = console.log.bind("worker onerror");
+            dummyWorker.postMessage({
+                buff: messagingSab
+            });
+        }
+
+        function executeSomeDummyJS(script) {
+            dummyWorker.postMessage({
+                exec: 1
+            });
+        }
+    </script>
+</body>
+</html>
