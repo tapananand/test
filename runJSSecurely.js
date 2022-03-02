@@ -187,7 +187,7 @@ function sendScriptRunningInfo(script) {
   // (since creation of worker seems to need main thread to not be blocked)
   setTimeout(() => {
     scriptIframe.contentWindow.executeSomeDummyJS(""); // the script string doesn't matter for this POC, just executing some dummy code in worker 
-//     goIntoJSExecutionCycle();
+    goIntoJSExecutionCycle();
   }, 1000);
 }
 
